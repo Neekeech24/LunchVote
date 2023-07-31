@@ -1,4 +1,8 @@
 from django.urls import path
-from mainapp.views import index
+from .views import get_winner, get_all_winners
 
-urlpatterns = [path("", index)]
+urlpatterns = [
+    path('winner/', get_winner),
+    path('winner/<str:date>', get_winner),
+    path('winners/', get_all_winners),
+]

@@ -2,6 +2,7 @@ import datetime
 
 from django.contrib.auth.models import User
 from django.db import models
+from django.db.models import Sum
 
 
 class User(models.Model):
@@ -32,6 +33,20 @@ class Slot(models.Model):
     date = models.DateField(auto_now_add=True)
     is_winner = models.BooleanField(default=False)
 
+    @property
+    def votes_count(self):
+        return self.votes.aggregate(Sum('weight'))['weight__sum']
+
+    @property
+    def distinct_votes(self):
+        """
+        with postgres we can use distinct() with field argument
+        """
+        return len(set([vote.user for vote in self.votes.select_related('user').all()]))
+
+    def __str__(self):
+        return f"{self.restaurant.name} - {self.votes_count}"
+
 
 class Vote(models.Model):
     """
@@ -42,25 +57,26 @@ class Vote(models.Model):
     restaurant = models.ForeignKey(
         Restaurant, on_delete=models.CASCADE, related_name="votes"
     )
-    slot = models.ForeignKey(Slot, on_delete=models.CASCADE, related_name="slots", blank=True)
+    slot = models.ForeignKey(Slot, on_delete=models.CASCADE, related_name="votes", blank=True)
     weight = models.FloatField(blank=True)
+    archieved = models.BooleanField()
 
     def __str__(self):
         return f"{self.user} - {self.restaurant} - {self.weight}"
 
     def save(self, *args, **kwargs):
-        user_votes = Vote.objects.filter(user=self.user)
-        if user_votes.count() >= self.user.max_votes:
+        user_votes = Vote.objects.filter(user=self.user, archieved=False)
+        if user_votes.count() >= self.user.max_votes and not self.pk:
             raise Exception(f"Vote limit of {self.user.max_votes} has been reached")
 
-        self.weight = 1
         rest_votes = user_votes.filter(restaurant=self.restaurant)
         if rest_votes:
-            for i in rest_votes:
-                self.weight = self.weight / 2
-                if self.weight <= 0.25:
-                    self.weight = 0.25
-                    break
+            weights = [1, 0.5, 0.25]
+            votes_weight = [vote.weight for vote in rest_votes]
+            if weight := list(set(weights).symmetric_difference(set(votes_weight))):
+                self.weight = weight[0]
+            else:
+                self.weight = 0.25
 
         self.slot, created = Slot.objects.get_or_create(
             restaurant=self.restaurant,
